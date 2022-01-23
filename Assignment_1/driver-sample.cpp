@@ -95,8 +95,8 @@ void FillEmployee(Employee & emp)
 {
     static unsigned int index = 0;
 
-    strcpy(emp.firstName, PEOPLE[index].firstName);
-    strcpy(emp.lastName, PEOPLE[index].lastName);
+    strcpy_s(emp.firstName, PEOPLE[index].firstName);
+    strcpy_s(emp.lastName, PEOPLE[index].lastName);
     emp.salary = PEOPLE[index].salary;
     emp.years  = PEOPLE[index].years;
     index++;

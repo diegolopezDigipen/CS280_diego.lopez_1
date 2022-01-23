@@ -191,6 +191,8 @@ class ObjectAllocator
     GenericObject * FreeList_;                      // the beginning of the list of objects
     void            allocate_new_page(void);        // allocates another page of objects
     void            put_on_freelist(void * Object); // puts Object onto the free list
+    OAConfig        configuration_;
+    OAStats         stats_;
 
     // Make private to prevent copy construction and assignment
     ObjectAllocator(const ObjectAllocator & oa);
