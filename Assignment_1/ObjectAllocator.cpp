@@ -26,8 +26,11 @@ ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
     }
     catch (const std::exception&) { throw OAException(OAException::E_NO_MEMORY, "There is now memory, error when using new"); }
 
+    if (pdBytes)
+        memset(Block + sizeof(GenericObject*), PAD_PATTERN, pdBytes);
 
-    memset(Block + sizeof(char*), UNALLOCATED_PATTERN, ObjectSize);
+    memset(Block + sizeof(GenericObject*) + pdBytes, UNALLOCATED_PATTERN, ObjectSize);
+
     PageList_ = reinterpret_cast<GenericObject*>(Block);
     PageList_->Next = nullptr;
 
@@ -39,8 +42,12 @@ ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
 
     for (int i = 1; i < configuration_.ObjectsPerPage_; i++)
     {
-        memset(other + i * ObjectSize, UNALLOCATED_PATTERN, ObjectSize);
-
+        memset(other + i * (ObjectSize+pdBytes), UNALLOCATED_PATTERN, ObjectSize);
+        if (pdBytes)
+        {
+            memset(other + i * (stats_.ObjectSize_ + pdBytes) + stats_.ObjectSize_, PAD_PATTERN, pdBytes);
+        }
+        
         GenericObject* prev = FreeList_;
         FreeList_ = reinterpret_cast<GenericObject*>(other + i * (ObjectSize + pdBytes));
         FreeList_->Next = prev;
@@ -57,6 +64,7 @@ ObjectAllocator::~ObjectAllocator()
 // Throws an exception if the object can't be allocated. (Memory allocation problem)
 void* ObjectAllocator::Allocate(const char* label)
 {  
+    unsigned pdBytes = configuration_.PadBytes_;
     if (stats_.FreeObjects_ == 0 && stats_.PagesInUse_!= configuration_.MaxPages_)
     {
         try
@@ -70,7 +78,8 @@ void* ObjectAllocator::Allocate(const char* label)
                 catch (const std::exception&) { throw OAException(OAException::E_NO_MEMORY, "There is now memory, error when using new"); }
 
                 stats_.PagesInUse_++;
-                memset(Block + sizeof(char*), UNALLOCATED_PATTERN, stats_.ObjectSize_);
+                memset(Block + sizeof(char*), PAD_PATTERN, pdBytes);
+                memset(Block + sizeof(char*) + pdBytes, UNALLOCATED_PATTERN, stats_.ObjectSize_);
                 GenericObject* previous = PageList_;
                 PageList_ = reinterpret_cast<GenericObject*>(Block);
                 PageList_->Next = previous;
@@ -83,9 +92,9 @@ void* ObjectAllocator::Allocate(const char* label)
                 for (int i = 1; i < configuration_.ObjectsPerPage_; i++)
                 {
                     memset(other + i * stats_.ObjectSize_, UNALLOCATED_PATTERN, stats_.ObjectSize_);
-
+                    memset(other + i * stats_.ObjectSize_ + pdBytes, PAD_PATTERN, pdBytes);
                     GenericObject* prev = FreeList_;
-                    FreeList_ = reinterpret_cast<GenericObject*>(other + i * stats_.ObjectSize_);
+                    FreeList_ = reinterpret_cast<GenericObject*>(other + i * stats_.ObjectSize_+pdBytes);
                     FreeList_->Next = prev;
                 }
 
