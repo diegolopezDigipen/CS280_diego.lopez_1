@@ -6,38 +6,45 @@
     // Throws an exception if the construction fails. (Memory allocation problem)
 ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
 {
-   configuration_ = config;
-   stats_.ObjectSize_ = ObjectSize;
-   stats_.PageSize_   = config.ObjectsPerPage_*ObjectSize+8;
-   stats_.FreeObjects_= config.ObjectsPerPage_;
-   stats_.ObjectsInUse_= 0;
-   stats_.PagesInUse_ = 1;
-   stats_.MostObjects_=0;
-   stats_.Allocations_=0;
-   stats_.Deallocations_=0;
+    configuration_ = config;
+    stats_.ObjectSize_ = ObjectSize;
+    stats_.PageSize_ = config.ObjectsPerPage_ * ObjectSize + 8;
+    stats_.FreeObjects_ = config.ObjectsPerPage_;
+    stats_.ObjectsInUse_ = 0;
+    stats_.PagesInUse_ = 1;
+    stats_.MostObjects_ = 0;
+    stats_.Allocations_ = 0;
+    stats_.Deallocations_ = 0;
 
-   char* Block;
-   try {
-       Block = new char[configuration_.ObjectsPerPage_ * ObjectSize + sizeof(char*)];
-   }
-   catch (const std::exception&) { throw OAException(OAException::E_NO_MEMORY, "There is now memory, error when using new"); }
-   memset(Block + sizeof(char*), UNALLOCATED_PATTERN, ObjectSize);
-   PageList_ = reinterpret_cast<GenericObject*>(Block);
-   PageList_->Next = nullptr;
+    unsigned pdBytes = configuration_.PadBytes_;
+    bool header = (configuration_.hbBasic || configuration_.hbExtended || configuration_.hbExternal);
+    char* Block;
+    unsigned bonusSize = ((1 + header) * configuration_.ObjectsPerPage_ + (1 - header));
 
-   FreeList_ = PageList_+1;
-   FreeList_->Next = nullptr;
-   char* other = Block + sizeof(char*);
-   
+    try {
+        Block = new char[configuration_.ObjectsPerPage_ * ObjectSize + sizeof(char*) + bonusSize * pdBytes];
+    }
+    catch (const std::exception&) { throw OAException(OAException::E_NO_MEMORY, "There is now memory, error when using new"); }
 
-   for(int i = 1; i < configuration_.ObjectsPerPage_; i++)
-   {
-       memset(other+i*ObjectSize, UNALLOCATED_PATTERN, ObjectSize);
-       
-       GenericObject* prev = FreeList_;
-       FreeList_ = reinterpret_cast<GenericObject*>(other+i*ObjectSize);
-       FreeList_->Next = prev;
-   }
+
+    memset(Block + sizeof(char*), UNALLOCATED_PATTERN, ObjectSize);
+    PageList_ = reinterpret_cast<GenericObject*>(Block);
+    PageList_->Next = nullptr;
+
+
+    FreeList_ = PageList_ + 1;
+    FreeList_->Next = nullptr;
+    char* other = Block + sizeof(char*) + pdBytes;
+
+
+    for (int i = 1; i < configuration_.ObjectsPerPage_; i++)
+    {
+        memset(other + i * ObjectSize, UNALLOCATED_PATTERN, ObjectSize);
+
+        GenericObject* prev = FreeList_;
+        FreeList_ = reinterpret_cast<GenericObject*>(other + i * (ObjectSize + pdBytes));
+        FreeList_->Next = prev;
+    }
 }
 
 
