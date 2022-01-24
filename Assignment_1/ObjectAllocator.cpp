@@ -11,10 +11,10 @@ ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
     unsigned pdBytes = configuration_.PadBytes_;
     unsigned hdBytes = configuration_.HBlockInfo_.size_;
     stats_.ObjectSize_ = ObjectSize;
-    stats_.PageSize_ = configuration_.ObjectsPerPage_ * ObjectSize + sizeof(char*) + 2 * configuration_.ObjectsPerPage_ * pdBytes + hdBytes * configuration_.ObjectsPerPage_;
-    stats_.FreeObjects_ = config.ObjectsPerPage_;
+    stats_.PageSize_ = configuration_.ObjectsPerPage_ * ObjectSize + sizeof(char*) + 2 * configuration_.ObjectsPerPage_ * pdBytes /* + hdBytes * configuration_.ObjectsPerPage_*/;
+    stats_.FreeObjects_ = 0;
     stats_.ObjectsInUse_ = 0;
-    stats_.PagesInUse_ = 1;
+    stats_.PagesInUse_ = 0;
     stats_.MostObjects_ = 0;
     stats_.Allocations_ = 0;
     stats_.Deallocations_ = 0;
@@ -22,9 +22,20 @@ ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
     
     bool header = (configuration_.hbBasic || configuration_.hbExtended || configuration_.hbExternal);
     char* Block;
+    PageList_ = nullptr;
+    FreeList_ = nullptr;
 
+    CreatePage(stats_, configuration_, FreeList_, PageList_);
+}
+
+void ObjectAllocator::CreatePage(OAStats& stats_, OAConfig& config_, GenericObject*& FreeList_, GenericObject*& PageList_)
+{
+    unsigned pdBytes = configuration_.PadBytes_;
+    unsigned hdBytes = configuration_.HBlockInfo_.size_;
+    unsigned ObjectSize = stats_.ObjectSize_;
+    char* Block;
     try {
-        Block = new char[configuration_.ObjectsPerPage_ * ObjectSize + sizeof(char*) + 2 * configuration_.ObjectsPerPage_ * pdBytes];
+        Block = new char[stats_.PageSize_];
     }
     catch (const std::exception&) { throw OAException(OAException::E_NO_MEMORY, "There is now memory, error when using new"); }
 
@@ -36,32 +47,34 @@ ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
 
     memset(Block + sizeof(GenericObject*) + pdBytes + sizeof(void*), UNALLOCATED_PATTERN, ObjectSize - sizeof(void*));
 
+    GenericObject* previous = PageList_;
     PageList_ = reinterpret_cast<GenericObject*>(Block);
-    PageList_->Next = nullptr;
+    PageList_->Next = previous;
 
 
-    FreeList_ = reinterpret_cast<GenericObject*>(reinterpret_cast<char*>((PageList_ + 1)+pdBytes));
+    FreeList_ = reinterpret_cast<GenericObject*>(reinterpret_cast<char*>((PageList_ + 1) + pdBytes));
     FreeList_->Next = nullptr;
     char* other = Block + sizeof(char*);
 
 
     for (int i = 1; i < configuration_.ObjectsPerPage_; i++)
-    {    
-        memset(other + pdBytes + i * (ObjectSize+2*pdBytes)+sizeof(void*), UNALLOCATED_PATTERN, ObjectSize-sizeof(void*));
+    {
+        memset(other + pdBytes + i * (ObjectSize + 2 * pdBytes) + sizeof(void*), UNALLOCATED_PATTERN, ObjectSize - sizeof(void*));
         if (pdBytes)
         {
             memset(other + i * (ObjectSize + 2 * pdBytes), PAD_PATTERN, pdBytes);
             memset(other + pdBytes + i * (ObjectSize + 2 * pdBytes) + stats_.ObjectSize_, PAD_PATTERN, pdBytes);
         }
-        
-        
+
+
         GenericObject* prev = FreeList_;
         FreeList_ = reinterpret_cast<GenericObject*>(other + pdBytes + i * (ObjectSize + 2 * pdBytes));
         FreeList_->Next = prev;
     }
+
+    stats_.FreeObjects_ += configuration_.ObjectsPerPage_;
+    stats_.PagesInUse_++;
 }
-
-
 // Destroys the ObjectManager (never throws)
 ObjectAllocator::~ObjectAllocator()
 {
@@ -71,48 +84,18 @@ ObjectAllocator::~ObjectAllocator()
 // Throws an exception if the object can't be allocated. (Memory allocation problem)
 void* ObjectAllocator::Allocate(const char* label)
 {  
+    unsigned ObjectSize = stats_.ObjectSize_;
     unsigned pdBytes = configuration_.PadBytes_;
-    if (stats_.FreeObjects_ == 0 && stats_.PagesInUse_!= configuration_.MaxPages_)
+    if (stats_.FreeObjects_ == 0)
     {
-        try
+        if (stats_.PagesInUse_ != configuration_.MaxPages_)
         {
-            if (stats_.PagesInUse_ != configuration_.MaxPages_)
-            {
-                char* Block;
-                try {
-                    Block = new char[configuration_.ObjectsPerPage_ * stats_.ObjectSize_ + sizeof(char*)];
-                }
-                catch (const std::exception&) { throw OAException(OAException::E_NO_MEMORY, "There is now memory, error when using new"); }
-
-                stats_.PagesInUse_++;
-                memset(Block + sizeof(char*), PAD_PATTERN, pdBytes);
-                memset(Block + sizeof(char*) + pdBytes, UNALLOCATED_PATTERN, stats_.ObjectSize_);
-                GenericObject* previous = PageList_;
-                PageList_ = reinterpret_cast<GenericObject*>(Block);
-                PageList_->Next = previous;
-
-                FreeList_ = PageList_ + 1;
-                FreeList_->Next = nullptr;
-                char* other = Block + sizeof(char*);
-
-
-                for (int i = 1; i < configuration_.ObjectsPerPage_; i++)
-                {
-                    memset(other + i * stats_.ObjectSize_, UNALLOCATED_PATTERN, stats_.ObjectSize_);
-                    memset(other + i * stats_.ObjectSize_ + pdBytes, PAD_PATTERN, pdBytes);
-                    GenericObject* prev = FreeList_;
-                    FreeList_ = reinterpret_cast<GenericObject*>(other + i * stats_.ObjectSize_+pdBytes);
-                    FreeList_->Next = prev;
-                }
-
-                stats_.FreeObjects_ += configuration_.ObjectsPerPage_;
-            }
-            else
-            {
-                throw(std::exception());
-            }
+            CreatePage(stats_, configuration_, FreeList_, PageList_);
         }
-        catch (const std::exception&){ throw OAException(OAException::E_NO_PAGES, "Couldnt allocate, max number of ages reached coulndt allocate more space"); }
+        else
+        {
+            throw OAException(OAException::E_NO_PAGES, "Couldnt allocate, max number of ages reached coulndt allocate more space");
+        }
     }
    if(stats_.FreeObjects_ != 0)
    {    
@@ -141,10 +124,10 @@ void ObjectAllocator::Free(void* Object)
 {
     try
     {
-        //if()
-        //{
-        //
-        //}
+       //if(*reinterpret_cast<unsigned char *>(Object) == FREED_PATTERN)
+       //{
+       //    throw OAException(OAException::E_MULTIPLE_FREE, "Multiple Free");
+       //}
         memset(Object, FREED_PATTERN, stats_.ObjectSize_);
         stats_.FreeObjects_++;
         stats_.ObjectsInUse_--;
