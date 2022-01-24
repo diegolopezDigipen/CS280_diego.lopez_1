@@ -16,40 +16,45 @@ ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
     stats_.Allocations_ = 0;
     stats_.Deallocations_ = 0;
 
+    unsigned hdBytes = configuration_.HBlockInfo_.size_;
     unsigned pdBytes = configuration_.PadBytes_;
     bool header = (configuration_.hbBasic || configuration_.hbExtended || configuration_.hbExternal);
     char* Block;
-    unsigned bonusSize = ((1 + header) * configuration_.ObjectsPerPage_ + (1 - header));
 
     try {
-        Block = new char[configuration_.ObjectsPerPage_ * ObjectSize + sizeof(char*) + bonusSize * pdBytes];
+        Block = new char[configuration_.ObjectsPerPage_ * ObjectSize + sizeof(char*) + 2 * configuration_.ObjectsPerPage_ * pdBytes];
     }
     catch (const std::exception&) { throw OAException(OAException::E_NO_MEMORY, "There is now memory, error when using new"); }
 
     if (pdBytes)
+    {
         memset(Block + sizeof(GenericObject*), PAD_PATTERN, pdBytes);
+        memset(Block + sizeof(GenericObject*) + pdBytes + ObjectSize, PAD_PATTERN, pdBytes);
+    }
 
-    memset(Block + sizeof(GenericObject*) + pdBytes, UNALLOCATED_PATTERN, ObjectSize);
+    memset(Block + sizeof(GenericObject*) + pdBytes + sizeof(void*), UNALLOCATED_PATTERN, ObjectSize - sizeof(void*));
 
     PageList_ = reinterpret_cast<GenericObject*>(Block);
     PageList_->Next = nullptr;
 
 
-    FreeList_ = PageList_ + 1;
+    FreeList_ = reinterpret_cast<GenericObject*>(reinterpret_cast<char*>((PageList_ + 1)+pdBytes));
     FreeList_->Next = nullptr;
-    char* other = Block + sizeof(char*) + pdBytes;
+    char* other = Block + sizeof(char*);
 
 
     for (int i = 1; i < configuration_.ObjectsPerPage_; i++)
-    {
-        memset(other + i * (ObjectSize+pdBytes), UNALLOCATED_PATTERN, ObjectSize);
+    {    
+        memset(other + pdBytes + i * (ObjectSize+2*pdBytes)+sizeof(void*), UNALLOCATED_PATTERN, ObjectSize-sizeof(void*));
         if (pdBytes)
         {
-            memset(other + i * (stats_.ObjectSize_ + pdBytes) + stats_.ObjectSize_, PAD_PATTERN, pdBytes);
+            memset(other + i * (ObjectSize + 2 * pdBytes), PAD_PATTERN, pdBytes);
+            memset(other + pdBytes + i * (ObjectSize + 2 * pdBytes) + stats_.ObjectSize_, PAD_PATTERN, pdBytes);
         }
         
+        
         GenericObject* prev = FreeList_;
-        FreeList_ = reinterpret_cast<GenericObject*>(other + i * (ObjectSize + pdBytes));
+        FreeList_ = reinterpret_cast<GenericObject*>(other + pdBytes + i * (ObjectSize + 2 * pdBytes));
         FreeList_->Next = prev;
     }
 }
