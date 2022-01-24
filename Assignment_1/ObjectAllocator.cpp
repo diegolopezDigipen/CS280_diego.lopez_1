@@ -6,9 +6,12 @@
     // Throws an exception if the construction fails. (Memory allocation problem)
 ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
 {
+    
     configuration_ = config;
+    unsigned pdBytes = configuration_.PadBytes_;
+    unsigned hdBytes = configuration_.HBlockInfo_.size_;
     stats_.ObjectSize_ = ObjectSize;
-    stats_.PageSize_ = config.ObjectsPerPage_ * ObjectSize + 8;
+    stats_.PageSize_ = configuration_.ObjectsPerPage_ * ObjectSize + sizeof(char*) + 2 * configuration_.ObjectsPerPage_ * pdBytes + hdBytes * configuration_.ObjectsPerPage_;
     stats_.FreeObjects_ = config.ObjectsPerPage_;
     stats_.ObjectsInUse_ = 0;
     stats_.PagesInUse_ = 1;
@@ -16,8 +19,7 @@ ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
     stats_.Allocations_ = 0;
     stats_.Deallocations_ = 0;
 
-    unsigned hdBytes = configuration_.HBlockInfo_.size_;
-    unsigned pdBytes = configuration_.PadBytes_;
+    
     bool header = (configuration_.hbBasic || configuration_.hbExtended || configuration_.hbExternal);
     char* Block;
 
@@ -122,6 +124,10 @@ void* ObjectAllocator::Allocate(const char* label)
        memset(temp, 0xBB, stats_.ObjectSize_);
        stats_.FreeObjects_--;
        stats_.ObjectsInUse_++;
+       if (stats_.ObjectsInUse_ > stats_.MostObjects_)
+       {
+           stats_.MostObjects_ = stats_.ObjectsInUse_;
+       }
        stats_.Allocations_++;
        return reinterpret_cast<void*>(temp);
    }
@@ -133,13 +139,25 @@ void* ObjectAllocator::Allocate(const char* label)
 // Throws an exception if the the object can't be freed. (Invalid object)
 void ObjectAllocator::Free(void* Object)
 {
-    memset(Object, FREED_PATTERN, stats_.ObjectSize_);
-    stats_.FreeObjects_++;
-    stats_.ObjectsInUse_--;
-    GenericObject* ptr = reinterpret_cast<GenericObject*>(Object);
-    ptr->Next = FreeList_;
-    FreeList_ = ptr;
-    stats_.Deallocations_++;
+    try
+    {
+        //if()
+        //{
+        //
+        //}
+        memset(Object, FREED_PATTERN, stats_.ObjectSize_);
+        stats_.FreeObjects_++;
+        stats_.ObjectsInUse_--;
+        GenericObject* ptr = reinterpret_cast<GenericObject*>(Object);
+        ptr->Next = FreeList_;
+        FreeList_ = ptr;
+        stats_.Deallocations_++;
+    }
+    catch (const std::exception&)
+    {
+
+    }
+    
 }
 
 // Calls the callback fn for each block still in use
