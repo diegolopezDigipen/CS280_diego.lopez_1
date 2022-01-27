@@ -185,7 +185,7 @@ class ObjectAllocator
     OAConfig     GetConfig(void) const;     // returns the configuration parameters
     OAStats      GetStats(void) const;      // returns the statistics for the allocator
 
-    void         CreatePage( GenericObject*& FreeList_, GenericObject*& PageList_);
+    
 
   private:
     // Some "suggested" members (only a suggestion!)
@@ -195,6 +195,7 @@ class ObjectAllocator
     void            put_on_freelist(void * Object); // puts Object onto the free list
     OAConfig        configuration_;
     OAStats         stats_;
+    void         CreatePage(GenericObject*& FreeList_, GenericObject*& PageList_);
 
     // Make private to prevent copy construction and assignment
     ObjectAllocator(const ObjectAllocator & oa);
