@@ -185,7 +185,7 @@ class ObjectAllocator
     OAConfig     GetConfig(void) const;     // returns the configuration parameters
     OAStats      GetStats(void) const;      // returns the statistics for the allocator
 
-    void         CreatePage(OAStats& stats_, OAConfig& config_, GenericObject*& FreeList_, GenericObject*& PageList_);
+    void         CreatePage( GenericObject*& FreeList_, GenericObject*& PageList_);
 
   private:
     // Some "suggested" members (only a suggestion!)

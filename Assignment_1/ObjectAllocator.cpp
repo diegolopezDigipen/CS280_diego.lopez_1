@@ -1,4 +1,4 @@
-#include "ObjectAllocator.h"
+﻿#include "ObjectAllocator.h"
 #include "string.h"
 
 
@@ -9,7 +9,7 @@ ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
     
     configuration_ = config;
     unsigned pdBytes = configuration_.PadBytes_;
-    unsigned hdBytes = configuration_.HBlockInfo_.size_;
+    size_t hdBytes = configuration_.HBlockInfo_.size_;
     stats_.ObjectSize_ = ObjectSize;
     stats_.PageSize_ = configuration_.ObjectsPerPage_ * ObjectSize + sizeof(char*) + 2 * configuration_.ObjectsPerPage_ * pdBytes + hdBytes * configuration_.ObjectsPerPage_;
     stats_.FreeObjects_ = 0;
@@ -18,25 +18,23 @@ ObjectAllocator::ObjectAllocator(size_t ObjectSize, const OAConfig& config)
     stats_.MostObjects_ = 0;
     stats_.Allocations_ = 0;
     stats_.Deallocations_ = 0;
-
-    char* Block;
     PageList_ = nullptr;
     FreeList_ = nullptr;
 
-    CreatePage(stats_, configuration_, FreeList_, PageList_);
+    CreatePage(FreeList_, PageList_);
 }
 
-void ObjectAllocator::CreatePage(OAStats& stats_, OAConfig& config_, GenericObject*& FreeList_, GenericObject*& PageList_)
+void ObjectAllocator::CreatePage( GenericObject*& FreeList_, GenericObject*& PageList_)
 {
     unsigned pdBytes = configuration_.PadBytes_;
-    unsigned hdBytes = configuration_.HBlockInfo_.size_;
-    unsigned ObjectSize = stats_.ObjectSize_;
+    size_t hdBytes = configuration_.HBlockInfo_.size_;
+    size_t ObjectSize = stats_.ObjectSize_;
     char* Block;
     //Allocate
     try {
         Block = new char[stats_.PageSize_];
     }
-    catch (const std::exception&) { throw OAException(OAException::E_NO_MEMORY, "There is now memory, error when using new"); }
+    catch (const std::exception&) { throw OAException(OAException::E_NO_MEMORY, "There is no memory, error when using new"); }
 
 
      if(hdBytes)
@@ -57,32 +55,30 @@ void ObjectAllocator::CreatePage(OAStats& stats_, OAConfig& config_, GenericObje
     PageList_->Next = previous;
 
     previous = FreeList_;
-    FreeList_ = reinterpret_cast<GenericObject*>(reinterpret_cast<char*>((PageList_ + 1) + pdBytes + hdBytes));
+    FreeList_ = reinterpret_cast<GenericObject*>(reinterpret_cast<char*>((PageList_ + 1)) + pdBytes + hdBytes);
     FreeList_->Next = previous;
     char* other = Block + sizeof(char*);
 
 
-    for (int i = 1; i < configuration_.ObjectsPerPage_; i++)
+    for (unsigned int i = 1; i < configuration_.ObjectsPerPage_; i++)
     {
         GenericObject* prev = FreeList_;
         FreeList_ = reinterpret_cast<GenericObject*>(other + pdBytes + hdBytes + i * (ObjectSize + 2 * pdBytes + hdBytes));
-        
-        GenericObject* temp = FreeList_;
-        memset(reinterpret_cast<char*>(temp), UNALLOCATED_PATTERN, ObjectSize);
-        
         FreeList_->Next = prev;
-        if(hdBytes)
+        GenericObject* temp = FreeList_;
+        memset(reinterpret_cast<char*>(temp)+sizeof(void*), UNALLOCATED_PATTERN, ObjectSize-sizeof(void*));   
+        
+
+        //Headers
+        if(hdBytes && configuration_.DebugOn_)
             memset(other + i * (ObjectSize + 2 * pdBytes + hdBytes), 0, hdBytes);
 
-        if (pdBytes)
+        //Pad Pattern
+        if (pdBytes && configuration_.DebugOn_)
         {
             memset(other + i * (ObjectSize + 2 * pdBytes + hdBytes) + hdBytes, PAD_PATTERN, pdBytes);
-            memset(other + pdBytes + i * (ObjectSize + 2 * pdBytes + hdBytes) + stats_.ObjectSize_ + hdBytes, PAD_PATTERN, pdBytes);
-        }
-
-
-        
-        
+            memset(other + i * (ObjectSize + 2 * pdBytes + hdBytes) + hdBytes + ObjectSize + pdBytes, PAD_PATTERN, pdBytes);
+        }    
     }
 
     stats_.FreeObjects_ += configuration_.ObjectsPerPage_;
@@ -93,7 +89,7 @@ void ObjectAllocator::CreatePage(OAStats& stats_, OAConfig& config_, GenericObje
 ObjectAllocator::~ObjectAllocator()
 {
     unsigned pdBytes = configuration_.PadBytes_;
-    unsigned hdBytes = configuration_.HBlockInfo_.size_;
+    size_t hdBytes = configuration_.HBlockInfo_.size_;
 
     //Check if headers need to be deallocated
     if (configuration_.HBlockInfo_.type_ == OAConfig::hbExternal)
@@ -134,6 +130,7 @@ ObjectAllocator::~ObjectAllocator()
 // Throws an exception if the object can't be allocated. (Memory allocation problem)
 void* ObjectAllocator::Allocate(const char* label)
 {  
+    bool State = configuration_.DebugOn_;
     if (configuration_.UseCPPMemManager_)
     {
         char* ptr = new char[stats_.ObjectSize_];
@@ -148,14 +145,13 @@ void* ObjectAllocator::Allocate(const char* label)
     }
     else
     {
-        unsigned ObjectSize = stats_.ObjectSize_;
         unsigned pdBytes = configuration_.PadBytes_;
-        unsigned hdBytes = configuration_.HBlockInfo_.size_;
+        size_t hdBytes = configuration_.HBlockInfo_.size_;
         if (stats_.FreeObjects_ == 0)
         {
             if (stats_.PagesInUse_ != configuration_.MaxPages_)
             {
-                CreatePage(stats_, configuration_, FreeList_, PageList_);
+                CreatePage(FreeList_, PageList_);
             }
             else
             {
@@ -167,8 +163,8 @@ void* ObjectAllocator::Allocate(const char* label)
             GenericObject* temp = FreeList_;
 
             FreeList_ = FreeList_->Next;
-
-            memset(temp, 0xBB, stats_.ObjectSize_);
+            if(State)
+                memset(temp, 0xBB, stats_.ObjectSize_);
             stats_.FreeObjects_--;
             stats_.ObjectsInUse_++;
             if (stats_.ObjectsInUse_ > stats_.MostObjects_)
@@ -183,16 +179,16 @@ void* ObjectAllocator::Allocate(const char* label)
             char* header = reinterpret_cast<char*>(temp) - pdBytes - hdBytes;
             if (configuration_.HBlockInfo_.type_ != OAConfig::hbNone)
             {
-                if (configuration_.HBlockInfo_.type_ == OAConfig::hbBasic)
+                if (configuration_.HBlockInfo_.type_ == OAConfig::hbBasic && State)
                 {
                     ptr = reinterpret_cast<unsigned int*>(header);
                     *ptr = stats_.Allocations_;
                     *(header + 4) = 1;
                 }
-                else if (configuration_.HBlockInfo_.type_ == OAConfig::hbExtended)
+                else if (configuration_.HBlockInfo_.type_ == OAConfig::hbExtended && State)
                 {
                     counter = reinterpret_cast<short*>(header + 1);
-                    *(counter) += 1;
+                    (*counter)++;
                     ptr = reinterpret_cast<unsigned int*>(header + 3);
                     *ptr = stats_.Allocations_;
                     *(header + 7) = 1;
@@ -203,9 +199,15 @@ void* ObjectAllocator::Allocate(const char* label)
                     *(headerPtr) = new MemBlockInfo();
                     (*headerPtr)->in_use = 1;
                     (*headerPtr)->alloc_num = stats_.Allocations_;
-                    (*headerPtr)->label = new char[strlen(label) + 1];
-                    strcpy_s((*headerPtr)->label, strlen(label) + 1, label);
-                    int I = 0;
+                    if (label)
+                    {
+                        (*headerPtr)->label = new char[strlen(label) + 1];
+                        strcpy((*headerPtr)->label, label);
+                    }
+                    else
+                    {
+                        (*headerPtr)->label = nullptr;
+                    }
                 }
             }
             return reinterpret_cast<void*>(temp);
@@ -218,9 +220,10 @@ void* ObjectAllocator::Allocate(const char* label)
 // Throws an exception if the the object can't be freed. (Invalid object)
 void ObjectAllocator::Free(void* Object)
 {
+    bool State = configuration_.DebugOn_;
     if (configuration_.UseCPPMemManager_)
     {
-        delete Object;
+        delete [] reinterpret_cast<char*>(Object);
         //Stats
         stats_.FreeObjects_++;
         stats_.ObjectsInUse_--;
@@ -229,37 +232,86 @@ void ObjectAllocator::Free(void* Object)
     else
     {
         unsigned pdBytes = configuration_.PadBytes_;
-        unsigned hdBytes = configuration_.HBlockInfo_.size_;
-        //GenericObject* other = PageList_;
-        ////look thorough the pages for boundary check
-        //while (other)
-        //{
-        //    bool found = false;
-        //    GenericObject* temp = other;
-        //    for (int i = 0; i < configuration_.ObjectsPerPage_; i++)
-        //    {
-        //        char* ptr = reinterpret_cast<char*>(temp) + hdBytes + pdBytes + i *(stats_.ObjectSize_ + 2 * pdBytes +hdBytes);
-        //        if (Object == ptr)
-        //            found = true;
-        //    }
-        //    other = other->Next;
-        //    delete[] other;
-        //}
+        size_t hdBytes = configuration_.HBlockInfo_.size_;
 
-        
+        GenericObject* other = PageList_;
+        bool found = false;
 
-
-        GenericObject* temp = FreeList_;
-        for (int i = 0; i < stats_.FreeObjects_; i++)
+        if (State)
         {
-            if (Object == temp)
-                throw OAException(OAException::E_MULTIPLE_FREE, "Multiple Free");
-            temp = temp->Next;
+            //look thorough the pages for boundary check
+            while (other)
+            {
+                GenericObject* temp = other;
+                if (Object > temp && Object < reinterpret_cast<char*>(temp) + stats_.PageSize_)
+                {
+                    char* PageTemp = reinterpret_cast<char*>(other);
+                    size_t firstOBJ = sizeof(void*) + hdBytes + pdBytes;
+                    size_t offset = (stats_.ObjectSize_ + 2 * pdBytes + hdBytes);
+                    auto position = reinterpret_cast<char*>(Object) - PageTemp - firstOBJ;
+                    if (position % offset == 0)
+                    {
+                        found = true;
+                        break;
+                    }
+                    else
+                    {
+                        found = false;
+                        break;
+                    }
+                }
+                other = other->Next;
+                if (found)
+                    break;
+            }
+            if (!found)
+                throw OAException(OAException::E_BAD_BOUNDARY, "Bad boundary Free");
+
+            if (hdBytes)
+            {
+                if (configuration_.HBlockInfo_.type_ == OAConfig::hbBasic || configuration_.HBlockInfo_.type_ == OAConfig::hbExtended)
+                {
+                    if (*(reinterpret_cast<char*>(Object) - pdBytes - 1) == 0)
+                        throw OAException(OAException::E_MULTIPLE_FREE, "Multiple Free");
+                }
+                else if (configuration_.HBlockInfo_.type_ == OAConfig::hbExternal)
+                {
+                    MemBlockInfo** save = reinterpret_cast<MemBlockInfo**>(reinterpret_cast<char*>(Object) - pdBytes - hdBytes);
+                    if (*save)
+                    {
+                        if (!(*save)->in_use)
+                            throw OAException(OAException::E_MULTIPLE_FREE, "Multiple Free");
+                    }
+                }
+            }
+            else
+            {
+                //Check double Free
+                GenericObject* temp = FreeList_;
+                for (unsigned int i = 0; i < stats_.FreeObjects_; i++)
+                {
+                    if (Object == temp)
+                        throw OAException(OAException::E_MULTIPLE_FREE, "Multiple Free");
+                    temp = temp->Next;
+                }
+            }
+
+            unsigned char* ptr1 = reinterpret_cast<unsigned char*>(Object) - pdBytes;
+            unsigned char* ptr2 = ptr1 + stats_.ObjectSize_ + pdBytes;
+            for (size_t i = 0; i < pdBytes; i++)
+            {
+                if (ptr1[i] != PAD_PATTERN)
+                {
+                    throw OAException(OAException::E_CORRUPTED_BLOCK, "Corrupted");
+                }
+                if (ptr2[i] != PAD_PATTERN)
+                {
+                    throw OAException(OAException::E_CORRUPTED_BLOCK, "Corrupted");
+                }
+            }
+
+            memset(reinterpret_cast<char*>(Object), FREED_PATTERN, stats_.ObjectSize_);
         }
-
-
-        memset(reinterpret_cast<char*>(Object), FREED_PATTERN, stats_.ObjectSize_);
-        
         GenericObject* ptr = reinterpret_cast<GenericObject*>(Object);
         ptr->Next = FreeList_;
         FreeList_ = ptr;
@@ -274,13 +326,13 @@ void ObjectAllocator::Free(void* Object)
         char* header = reinterpret_cast<char*>(Object) - pdBytes - hdBytes;
         if (configuration_.HBlockInfo_.type_ != OAConfig::hbNone)
         {
-            if (configuration_.HBlockInfo_.type_ == OAConfig::hbBasic)
+            if (configuration_.HBlockInfo_.type_ == OAConfig::hbBasic && State)
             {
 
                 *reinterpret_cast<unsigned int*>(header) = 0;
                 *(header + 4) = 0;
             }
-            else if (configuration_.HBlockInfo_.type_ == OAConfig::hbExtended)
+            else if (configuration_.HBlockInfo_.type_ == OAConfig::hbExtended && State)
             {
                 *reinterpret_cast<unsigned int*>(header + 3) = 0;
                 *(header + 7) = 0;
@@ -288,12 +340,16 @@ void ObjectAllocator::Free(void* Object)
             else if (configuration_.HBlockInfo_.type_ == OAConfig::hbExternal)
             {
                 MemBlockInfo** headerPtr = reinterpret_cast<MemBlockInfo**>(header);
-                if (*headerPtr)
+                if ((*headerPtr))
                 {
-                    delete[](*headerPtr)->label;
-                    (*headerPtr)->label = nullptr;
+                    if ((*headerPtr)->label)
+                    {
+                        delete[](*headerPtr)->label;
+                        (*headerPtr)->label = nullptr;
+                    }
                     delete* headerPtr;
                     *headerPtr = nullptr;
+                    headerPtr = nullptr;
                 }
             }
 
@@ -304,13 +360,79 @@ void ObjectAllocator::Free(void* Object)
 // Calls the callback fn for each block still in use
 unsigned ObjectAllocator::DumpMemoryInUse(DUMPCALLBACK fn) const
 {
-return 0;
+    unsigned count = 0;
+    GenericObject* temp = PageList_;
+    size_t pdBytes = configuration_.PadBytes_;
+    size_t hdBytes = configuration_.HBlockInfo_.size_;
+    while(temp)
+    {
+        char* itr = reinterpret_cast<char*>(temp);
+        for (unsigned int i = 0; i < configuration_.ObjectsPerPage_; i++)
+        {
+            //Take object
+            GenericObject* object = reinterpret_cast<GenericObject*>(itr + sizeof(void*) + hdBytes + pdBytes + i * (stats_.ObjectSize_ + 2 * pdBytes + hdBytes));
+
+            //Is it in use
+            GenericObject* temp1 = FreeList_;
+            bool in_use = true;
+            for (unsigned int i = 0; i < stats_.FreeObjects_; i++)
+            {
+                if (object == temp1)
+                {
+                    in_use = false;
+                    break;
+                }
+                temp1 = temp1->Next;
+            }
+            if (in_use)
+            {
+                count++;
+                fn(object, stats_.ObjectSize_);
+            }
+        }
+        temp = temp->Next;
+    }
+return count;
 }
 
 // Calls the callback fn for each block that is potentially corrupted
 unsigned ObjectAllocator::ValidatePages(VALIDATECALLBACK fn) const
 {
-    return 0;
+    if (!configuration_.DebugOn_ || !configuration_.PadBytes_)
+        return 0;
+    unsigned count= 0;
+    unsigned pdBytes = configuration_.PadBytes_;
+    size_t hdBytes = configuration_.HBlockInfo_.size_;
+    //Have to check through the pad bites to see if any of them where corrupted
+    GenericObject* other = PageList_;
+    //look thorough the pages for boundary check
+    while (other)
+    {
+        unsigned char* temp = reinterpret_cast<unsigned char*>(other);
+        for (unsigned int i = 0; i < configuration_.ObjectsPerPage_; i++)
+        {
+            unsigned char* ptr1 = temp + sizeof(void*) + hdBytes + i * (stats_.ObjectSize_ + 2 * pdBytes + hdBytes);
+            unsigned char* ptr2 = ptr1 + stats_.ObjectSize_ + pdBytes;
+            for (size_t i = 0; i < pdBytes; i++)
+            {
+                if (ptr1[i] != PAD_PATTERN)
+                {
+                    fn(ptr1 + pdBytes, stats_.ObjectSize_);
+                    count++;
+                    break;
+                }
+                if (ptr2[i] != PAD_PATTERN)
+                {
+                    fn(ptr1 + pdBytes, stats_.ObjectSize_);
+                    count++;
+                    break;
+                }
+            }
+            
+        }
+        other = other->Next;
+    }
+    return count;
 }
 
 // Frees all empty pages (extra credit)
@@ -328,7 +450,7 @@ bool ObjectAllocator::ImplementedExtraCredit(void)
 // Testing/Debugging/Statistic methods
 void         ObjectAllocator::SetDebugState(bool State)
 {
-    
+    configuration_.DebugOn_ = State;
 }
     // true=enable, false=disable
 const void*  ObjectAllocator::GetFreeList(void) const
